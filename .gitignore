@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+
+# logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# build outputs
+dist/
+build/
+.next/
+out/
+
+# typescript
+*.tsbuildinfo
+
+# prisma
+prisma/*.db
+prisma/*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# temp
+tmp/
+temp/
+
+# cache
+.cache/
+
+# coverage
+coverage/

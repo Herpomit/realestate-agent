@@ -1,0 +1,10 @@
+{
+  "apiBase": "http://188.240.81.60:4002",
+  "agentId": "a4923d35-df44-4903-a038-b7f6b47e262c",
+  "token": "2ba0c9806e58302a490b066eed631267487dd6b24d5f867c86f4254b0e524ad7",
+  "pollIntervalMs": 3000,
+  "downloadsDir": "D:\\projeler\\realestate-agent\\downloads",
+  "profilesDir": "D:\\projeler\\realestate-agent\\profiles",
+  "mediaDir": "C:\\shared-media",
+  "chromeProfilePath": "D:\\projeler\\realestate-agent\\profiles\\facebook"
+}
