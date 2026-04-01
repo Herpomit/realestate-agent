@@ -54,10 +54,10 @@ export const REALISTIC_USER_AGENT =
 
 /** İnsan benzeri yazma: karakterler arası rastgele gecikme (ms). */
 export function humanTypingDelay(): number {
-  return 50 + Math.floor(Math.random() * 120);
+  return 28 + Math.floor(Math.random() * 55);
 }
 
 /** İnsan benzeri kısa bekleme (tıklama öncesi/sonrası). */
 export function humanActionDelay(): number {
-  return 200 + Math.floor(Math.random() * 400);
+  return 100 + Math.floor(Math.random() * 180);
 }

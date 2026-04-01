@@ -521,13 +521,13 @@ async function ensureLoggedIn(
   credentials: FbCredentials | null,
   preferredLabel?: string,
 ): Promise<void> {
-  await randomDelay(400, 1200);
+  await randomDelay(200, 600);
   await page.goto("https://www.facebook.com", {
     waitUntil: "domcontentloaded",
   });
 
   await page.waitForLoadState("domcontentloaded");
-  await new Promise((r) => setTimeout(r, 1500)); // Sayfa yerleşsin
+  await new Promise((r) => setTimeout(r, 900)); // Sayfa yerleşsin
 
   if (await isLoggedIn(page)) {
     console.log("✅ Zaten giriş yapılmış (profil oturumu kullanılıyor).");
@@ -558,16 +558,14 @@ async function ensureLoggedIn(
   await tryGoToLoginFormFromAccountPicker(page);
 
   if (!(await isLoginPage(page))) {
-    console.log("⚠️  Giriş sayfası bekleniyor, 5 sn daha bekleniyor...");
-    await new Promise((r) => setTimeout(r, 5000));
+    console.log("⚠️  Giriş sayfası bekleniyor, kısa süre daha bekleniyor...");
+    await new Promise((r) => setTimeout(r, 2500));
     if (await isLoggedIn(page)) {
       console.log("✅ Giriş algılandı.");
       return;
     }
-    const usedRememberedAccountRetry = await trySelectRememberedAccountFromPicker(
-      page,
-      preferredLabel,
-    );
+    const usedRememberedAccountRetry =
+      await trySelectRememberedAccountFromPicker(page, preferredLabel);
     if (usedRememberedAccountRetry) {
       const completedPasswordOnlyRetry = await trySubmitPasswordOnlyStep(
         page,
@@ -699,7 +697,7 @@ async function tryDismissMarketplaceLoginModal(
   console.log("✅ Giriş Yap tıklandı, sayfa güncelleniyor...");
 
   await page.waitForLoadState("domcontentloaded");
-  await new Promise((r) => setTimeout(r, 3000));
+  await new Promise((r) => setTimeout(r, 1800));
   return true;
 }
 
@@ -713,7 +711,7 @@ async function ensureGroupPageAccess(
   const openGroupPage = async () => {
     await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("domcontentloaded");
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 900));
     await tryGoToLoginFormFromAccountPicker(page);
   };
 
@@ -729,7 +727,7 @@ async function ensureGroupPageAccess(
         "Grup sayfasında Facebook giriş ekranı açıldı ve otomatik giriş başarısız oldu.",
       );
     }
-    await randomDelay(500, 1200);
+    await randomDelay(250, 700);
     await openGroupPage();
   }
 
@@ -738,7 +736,7 @@ async function ensureGroupPageAccess(
     credentials,
   );
   if (modalDismissed) {
-    await randomDelay(500, 1200);
+    await randomDelay(250, 700);
     await openGroupPage();
   }
 
@@ -1100,12 +1098,12 @@ async function ensureMeetupPreferencesChecked(
   // Best-effort wait: this block appears on the details step right before “İleri”.
   await Promise.race([
     root
-      .locator('text=/Buluşma tercihleri/i')
+      .locator("text=/Buluşma tercihleri/i")
       .first()
       .waitFor({ state: "visible", timeout: 8000 })
       .catch(() => {}),
     page
-      .locator('text=/Buluşma tercihleri/i')
+      .locator("text=/Buluşma tercihleri/i")
       .first()
       .waitFor({ state: "visible", timeout: 8000 })
       .catch(() => {}),
@@ -1223,7 +1221,7 @@ async function runGroupSellFlow(
   const groupUrl =
     payload?.selectedFacebookGroups?.[0]?.url ||
     payload?.facebookGroups?.[0]?.url ||
-    "https://www.facebook.com/groups/453617698104576";
+    "https://www.facebook.com/groups/500703591569864";
 
   await ensureGroupPageAccess(page, groupUrl, fbCredentials);
 
@@ -1354,7 +1352,7 @@ async function runGroupSellFlow(
       const now = await counter.textContent().catch(() => null);
       if (now && now !== before && /Fotoğraflar.*[1-9]\d*\s*\/\s*42/i.test(now))
         break;
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 300));
     }
 
     const after = await counter.textContent().catch(() => null);
@@ -1368,7 +1366,7 @@ async function runGroupSellFlow(
       );
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
   const titleByLabel = fieldByLabel(root, /^Başlık$/i);
@@ -1452,7 +1450,7 @@ async function runGroupSellFlow(
     if (expanded === "true") break;
     await new Promise((r) => setTimeout(r, 250));
   }
-  await new Promise((r) => setTimeout(r, 800));
+  await new Promise((r) => setTimeout(r, 450));
 
   const descByLabel = fieldByLabel(root, /^Açıklama$/i);
   await descByLabel
@@ -1502,9 +1500,9 @@ async function runGroupSellFlow(
     );
     if (ok) {
       // After typing, select the suggestion from listbox (e.g. Antalya -> Antalya/Şehir)
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, 350));
       await selectListboxOptionByPrefix(page, root, location);
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 400));
     }
   }
 
@@ -1523,10 +1521,10 @@ async function runGroupSellFlow(
       .getAttribute("aria-disabled")
       .catch(() => "false");
     if (disabled !== "true") break;
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 250));
   }
   await ileri.click();
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 1100));
 
   // 6) “Daha fazla yerde paylaş / ilan ver” akışı:
   // - modal açılırsa: 20'şer grup seç, Paylaş, tekrar aç ve devam et.
@@ -1584,18 +1582,24 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
     for (const scope of searchScopes) {
       const byExactRow = scope
         .locator("div")
-        .filter({ has: scope.locator(`text=/${exactMarketplaceTitleRe.source}/i`) })
-        .filter({ has: scope.locator(`text=/${marketplaceDescriptionRe.source}/i`) })
         .filter({
-          has: scope.locator('svg[viewBox="0 0 24 24"], svg[viewBox="0 0 20 20"]'),
+          has: scope.locator(`text=/${exactMarketplaceTitleRe.source}/i`),
+        })
+        .filter({
+          has: scope.locator(`text=/${marketplaceDescriptionRe.source}/i`),
+        })
+        .filter({
+          has: scope.locator(
+            'svg[viewBox="0 0 24 24"], svg[viewBox="0 0 20 20"]',
+          ),
         })
         .first()
         .locator(
-          'xpath=ancestor::div[' +
+          "xpath=ancestor::div[" +
             './/*[normalize-space(.)="Marketplace" or normalize-space(.)="Pazar yeri"]' +
             ' and .//*[contains(normalize-space(.), "Marketplace ürünleri herkese açıktır") or contains(normalize-space(.), "Pazar yeri ürünleri herkese açıktır")]' +
             ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
-            '][1]',
+            "][1]",
         );
       if ((await byExactRow.count().catch(() => 0)) > 0) return byExactRow;
 
@@ -1603,10 +1607,10 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
         .locator(`text=/${marketplaceDescriptionRe.source}/i`)
         .first()
         .locator(
-          'xpath=ancestor::div[' +
+          "xpath=ancestor::div[" +
             './/*[normalize-space(.)="Marketplace" or normalize-space(.)="Pazar yeri"]' +
             ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
-            '][1]',
+            "][1]",
         );
       if ((await byExactDescriptionRow.count().catch(() => 0)) > 0)
         return byExactDescriptionRow;
@@ -1615,10 +1619,10 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
         .locator(`text=/${exactMarketplaceTitleRe.source}/i`)
         .first()
         .locator(
-          'xpath=ancestor::div[' +
+          "xpath=ancestor::div[" +
             './/*[contains(normalize-space(.), "Marketplace ürünleri herkese açıktır") or contains(normalize-space(.), "Pazar yeri ürünleri herkese açıktır")]' +
             ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
-            '][1]',
+            "][1]",
         );
       if ((await byTitleRow.count().catch(() => 0)) > 0) return byTitleRow;
     }
@@ -1637,12 +1641,12 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
       // Wait for the Marketplace section header/description to appear (best-effort).
       await Promise.race([
         dialog
-          .locator('text=/İlanını\\s+Marketplace[\'’]?e\\s+ekle/i')
+          .locator("text=/İlanını\\s+Marketplace['’]?e\\s+ekle/i")
           .first()
           .waitFor({ state: "visible", timeout: 6000 })
           .catch(() => {}),
         modal
-          .locator('text=/İlanını\\s+Marketplace[\'’]?e\\s+ekle/i')
+          .locator("text=/İlanını\\s+Marketplace['’]?e\\s+ekle/i")
           .first()
           .waitFor({ state: "visible", timeout: 6000 })
           .catch(() => {}),
@@ -1823,7 +1827,9 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
     const box = await target.boundingBox().catch(() => null);
     if (!box) continue;
 
-    const clickX = box.x + Math.min(box.width - 8, Math.max(box.width - 18, box.width * 0.9));
+    const clickX =
+      box.x +
+      Math.min(box.width - 8, Math.max(box.width - 18, box.width * 0.9));
     const clickY = box.y + box.height / 2;
 
     await page.mouse.click(clickX, clickY).catch(() => {});
@@ -1832,7 +1838,9 @@ async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
 
   if (await waitUntilChecked(10, 150)) return;
 
-  throw new Error('"Marketplace" seçeneği işaretlenemedi (durum doğrulanamadı).');
+  throw new Error(
+    '"Marketplace" seçeneği işaretlenemedi (durum doğrulanamadı).',
+  );
 }
 
 async function getMorePlacesDialog(page: Page): Promise<Locator | null> {
@@ -2213,7 +2221,7 @@ async function shareToMoreGroupsUntilExhausted(
   let marketplaceSelectionHandled = false;
 
   // Wait a bit: after “İleri” FB often animates into the share screen.
-  await new Promise((r) => setTimeout(r, 2500));
+  await new Promise((r) => setTimeout(r, 1200));
 
   // If the dialog doesn't exist, we do nothing (some accounts/flows may skip it).
   let dialog = await getMorePlacesDialog(page);
@@ -2257,29 +2265,18 @@ async function shareToMoreGroupsUntilExhausted(
 
     await clickPaylasAndWait(page, dialog);
 
-    // Re-open the dialog for the next batch.
-    // 1) Prefer post menu action on the current post page.
+    // Re-open only from the current post's 3-dots menu.
+    // If FB no longer offers "Daha fazla yerde ilan ver", we consider the job done.
     const openedFromMenu = await tryOpenMorePlacesFromPostMenu(
       page,
       opts.listingTitle,
     );
     if (openedFromMenu) {
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 600));
       continue;
     }
 
-    // 2) Fallback: go to group -> Senin Ürünlerin -> listing -> Daha fazla yerde ilan ver
-    const openedFromYourPosts = await tryOpenMorePlacesFromYourPosts(
-      page,
-      opts.groupUrl,
-      opts.listingTitle,
-    );
-    if (openedFromYourPosts) {
-      await new Promise((r) => setTimeout(r, 1200));
-      continue;
-    }
-
-    // If we can't reopen, we consider sharing done for this run.
+    // If we can't reopen from the same post menu, sharing is exhausted for this run.
     return;
   }
 }
@@ -2365,10 +2362,14 @@ export async function runFbMarketplace(
       });
 
       console.log("🔐 Facebook oturumu kontrol ediliyor...");
-      await ensureLoggedIn(page, {
-        email: cred.email,
-        password: cred.password,
-      }, cred.label);
+      await ensureLoggedIn(
+        page,
+        {
+          email: cred.email,
+          password: cred.password,
+        },
+        cred.label,
+      );
       await ensureCorrectFacebookAccount(page, cred.label, {
         email: cred.email,
         password: cred.password,
@@ -2387,7 +2388,7 @@ export async function runFbMarketplace(
         const payloadForPost = { ...(payload ?? {}), post };
 
         try {
-          await randomDelay(300, 900);
+          await randomDelay(120, 360);
           await runGroupSellFlow(page, payloadForPost, {
             email: cred.email,
             password: cred.password,
