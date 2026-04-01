@@ -12,6 +12,34 @@ function startsWithPath(baseDir: string, fullPath: string) {
   return full === base || full.startsWith(base + path.sep);
 }
 
+function sanitizeFolderName(s: string): string {
+  // Windows folder names cannot contain: \ / : * ? " < > |
+  // Also avoid trailing dots/spaces (Windows strips them on disk).
+  return (
+    s
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, "_")
+      // Collapse whitespace for stability
+      .replace(/\s+/g, " ")
+      // Avoid trailing dots/spaces
+      .replace(/[. ]+$/g, "")
+  );
+}
+
+function isProbablyImageFile(fileName: string): boolean {
+  const ext = path.extname(fileName).toLowerCase();
+  return [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".bmp",
+  ].includes(ext);
+}
+
 function normalizeMediaEntry(raw: string, mediaDir: string | undefined) {
   let s = raw.trim();
 
@@ -85,5 +113,83 @@ export function resolveMediaFilePaths(
     }
   }
 
+  return { resolved, missing, invalid };
+}
+
+export function listMediaFilesUnderTitleFolder(
+  title: unknown,
+  mediaDir: string | undefined,
+): { resolved: string[]; missing: string[]; invalid: string[]; folderTried?: string } {
+  const resolved: string[] = [];
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  if (!mediaDir) {
+    missing.push("mediaDir is not configured");
+    return { resolved, missing, invalid };
+  }
+
+  const rawTitle = typeof title === "string" ? title.trim() : "";
+  if (!rawTitle) {
+    invalid.push(String(title));
+    return { resolved, missing, invalid };
+  }
+
+  const candidates = Array.from(
+    new Set([rawTitle, sanitizeFolderName(rawTitle)].filter(Boolean)),
+  );
+
+  for (const folderName of candidates) {
+    const folderPath = path.resolve(mediaDir, folderName);
+    if (!startsWithPath(mediaDir, folderPath)) {
+      invalid.push(folderName);
+      continue;
+    }
+
+    try {
+      const st = fs.statSync(folderPath);
+      if (!st.isDirectory()) continue;
+    } catch {
+      // try next candidate
+      continue;
+    }
+
+    let entries: string[] = [];
+    try {
+      entries = fs.readdirSync(folderPath);
+    } catch (e: any) {
+      missing.push(
+        `Cannot read folder "${folderPath}": ${String(e?.message ?? e)}`,
+      );
+      return { resolved, missing, invalid, folderTried: folderPath };
+    }
+
+    const files = entries
+      .filter((n) => typeof n === "string" && n.trim().length > 0)
+      .filter((n) => isProbablyImageFile(n))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+    for (const f of files) {
+      const full = path.resolve(folderPath, f);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile()) resolved.push(full);
+      } catch {
+        // ignore missing file
+      }
+    }
+
+    if (resolved.length === 0) {
+      missing.push(`No image files found under "${folderPath}"`);
+    }
+
+    return { resolved, missing, invalid, folderTried: folderPath };
+  }
+
+  missing.push(
+    `Title folder not found under mediaDir for title="${rawTitle}" (tried: ${candidates.join(
+      ", ",
+    )})`,
+  );
   return { resolved, missing, invalid };
 }

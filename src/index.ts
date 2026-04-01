@@ -9,7 +9,7 @@ import {
   loadFbCredentials,
 } from "./credentials.js";
 import { getFingerprint } from "./device.js";
-import { resolveMediaFilePaths } from "./media.js";
+import { listMediaFilesUnderTitleFolder, resolveMediaFilePaths } from "./media.js";
 import { runFbMarketplace } from "./runners/fbMarketplace.js";
 
 type PairResp = { agentId: string; token: string };
@@ -134,36 +134,48 @@ async function main() {
           const mediaIssues: string[] = [];
           for (const p of posts) {
             const mp = p?.marketplacePayload;
+            const postTitle = String(p?.title ?? "").trim();
             const rawMedia =
               mp?.mediaFilePaths ??
               mp?.mediaFileNames ??
               mp?.imageFilePaths ??
               mp?.imageFileNames;
-            if (!mp || !rawMedia) continue;
+            if (!mp) continue;
 
-            const { resolved, missing, invalid } = resolveMediaFilePaths(
-              rawMedia,
+            // New behavior:
+            // - Prefer media under: <mediaDir>/<post.title>/*
+            // - If title folder not found / empty, fall back to old behavior (resolve by file names).
+            const fromTitleFolder = listMediaFilesUnderTitleFolder(
+              postTitle,
               cfg.mediaDir,
             );
-            mp.mediaFilePaths = resolved;
-            // Back-compat with payloads using imageFilePaths/imageFileNames keys
-            mp.imageFilePaths = resolved;
 
-            if (missing.length > 0 || invalid.length > 0) {
+            const used =
+              fromTitleFolder.resolved.length > 0
+                ? fromTitleFolder
+                : rawMedia
+                  ? resolveMediaFilePaths(rawMedia, cfg.mediaDir)
+                  : fromTitleFolder;
+
+            mp.mediaFilePaths = used.resolved;
+            // Back-compat with payloads using imageFilePaths/imageFileNames keys
+            mp.imageFilePaths = used.resolved;
+
+            if (used.missing.length > 0 || used.invalid.length > 0) {
               const postTag = p?.title
                 ? `Post "${String(p.title)}"`
                 : p?.id
                   ? `Post ${String(p.id)}`
                   : "Post";
 
-              if (missing.length > 0) {
+              if (used.missing.length > 0) {
                 mediaIssues.push(
-                  `${postTag} -> Bulunamayan medya dosyaları: ${missing.join(", ")}`,
+                  `${postTag} -> Bulunamayan medya: ${used.missing.join(", ")}`,
                 );
               }
-              if (invalid.length > 0) {
+              if (used.invalid.length > 0) {
                 mediaIssues.push(
-                  `${postTag} -> Geçersiz medya girdileri (path traversal vs): ${invalid.join(", ")}`,
+                  `${postTag} -> Geçersiz medya girdileri (path traversal vs): ${used.invalid.join(", ")}`,
                 );
               }
             }

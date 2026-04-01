@@ -1,7 +1,7 @@
 {
   "apiBase": "http://188.240.81.60:4002",
-  "agentId": "a4923d35-df44-4903-a038-b7f6b47e262c",
-  "token": "2ba0c9806e58302a490b066eed631267487dd6b24d5f867c86f4254b0e524ad7",
+  "agentId": "7d678dae-ff4e-462d-bb7a-6380e71c9437",
+  "token": "53eedddd319f1578ab5feacd5bb9bcebdaf6caef910b2d523349b6ed3caa8cb6",
   "pollIntervalMs": 3000,
   "downloadsDir": "D:\\projeler\\realestate-agent\\downloads",
   "profilesDir": "D:\\projeler\\realestate-agent\\profiles",

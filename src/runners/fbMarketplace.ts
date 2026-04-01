@@ -16,7 +16,7 @@ const TWO_FA_WAIT_MS = 10 * 60 * 1000; // 10 dakika (2FA / cihaz onayı)
 async function isTwoFactorChallenge(page: Page): Promise<boolean> {
   const selectors = [
     'input[name="approvals_code"]',
-    'input#approvals_code',
+    "input#approvals_code",
     'input[autocomplete="one-time-code"]',
     'input[inputmode="numeric"][maxlength="6"]',
   ];
@@ -37,7 +37,8 @@ async function isTwoFactorChallenge(page: Page): Promise<boolean> {
   ];
   for (const re of textHints) {
     try {
-      if (await page.getByText(re).first().isVisible({ timeout: 750 })) return true;
+      if (await page.getByText(re).first().isVisible({ timeout: 750 }))
+        return true;
     } catch {
       // ignore
     }
@@ -106,12 +107,16 @@ function resolveCredentialsToRun(
     return { id, email, password, label };
   };
 
-  const fromSelected = selected.map(normalize).filter(Boolean) as EmbeddedCredential[];
+  const fromSelected = selected
+    .map(normalize)
+    .filter(Boolean) as EmbeddedCredential[];
   if (fromSelected.length > 0) return fromSelected;
 
   if (embedded.length > 0 && ids.length > 0) {
     const fromEmbedded = embedded
-      .filter((c) => c && typeof c.id === "string" && ids.includes(String(c.id)))
+      .filter(
+        (c) => c && typeof c.id === "string" && ids.includes(String(c.id)),
+      )
       .map(normalize)
       .filter(Boolean) as EmbeddedCredential[];
     if (fromEmbedded.length > 0) return fromEmbedded;
@@ -154,7 +159,9 @@ async function logoutFromFacebook(page: Page): Promise<boolean> {
   if (!(await isLoggedIn(page))) return true;
 
   // Go to a stable surface first; group pages sometimes hide the top bar.
-  await page.goto("https://www.facebook.com", { waitUntil: "domcontentloaded" });
+  await page.goto("https://www.facebook.com", {
+    waitUntil: "domcontentloaded",
+  });
   await page.waitForLoadState("domcontentloaded");
   await new Promise((r) => setTimeout(r, 1200));
 
@@ -253,6 +260,129 @@ async function isLoginPage(page: Page): Promise<boolean> {
 }
 
 /** Bazı durumlarda FB "hesap seçici" ekranında kalır; "Başka bir profil kullan" ile login formuna geç. */
+async function trySelectRememberedAccountFromPicker(
+  page: Page,
+  preferredLabel?: string,
+): Promise<boolean> {
+  const expected = preferredLabel?.trim();
+  if (!expected) return false;
+
+  const headingVisible = await page
+    .getByText(/Facebook'a Giriş Yap|Log into Facebook/i)
+    .first()
+    .isVisible({ timeout: 1200 })
+    .catch(() => false);
+  if (!headingVisible) return false;
+
+  const exactRe = new RegExp(`^${escapeRegExp(expected)}$`, "i");
+  const candidates = [
+    page
+      .locator('[role="button"]')
+      .filter({
+        has: page.locator("span").filter({ hasText: exactRe }),
+      })
+      .first(),
+    page
+      .locator('div[role="button"], a[role="link"]')
+      .filter({ hasText: exactRe })
+      .first(),
+  ];
+
+  let accountBtn: Locator | null = null;
+  for (const cand of candidates) {
+    try {
+      if ((await cand.count()) === 0) continue;
+      if (await cand.isVisible({ timeout: 1000 })) {
+        accountBtn = cand;
+        break;
+      }
+    } catch {
+      // try next
+    }
+  }
+  if (!accountBtn) return false;
+
+  console.log(
+    `👤 Kayıtlı hesap seçici bulundu, "${expected}" profiline direkt giriliyor...`,
+  );
+  await accountBtn.click({ timeout: 10000 }).catch(() => {});
+
+  try {
+    await Promise.race([
+      page.waitForLoadState("domcontentloaded", { timeout: 20000 }),
+      page.waitForURL(
+        (url) =>
+          url.hostname === "www.facebook.com" &&
+          !url.pathname.startsWith("/login"),
+        { timeout: 20000 },
+      ),
+    ]);
+  } catch {
+    // continue with state checks below
+  }
+
+  await new Promise((r) => setTimeout(r, 1500));
+  return true;
+}
+
+async function trySubmitPasswordOnlyStep(
+  page: Page,
+  credentials: FbCredentials | null,
+): Promise<boolean> {
+  if (!credentials?.password) return false;
+
+  const pass = page
+    .locator('input[name="pass"], input[type="password"]')
+    .first();
+  const email = page.locator('input[name="email"], input#email').first();
+
+  const hasPass = await pass.isVisible({ timeout: 1200 }).catch(() => false);
+  const hasEmail = await email.isVisible({ timeout: 1200 }).catch(() => false);
+  if (!hasPass || hasEmail) return false;
+
+  console.log("🔐 Kayıtlı profil için şifre adımı açıldı, şifre giriliyor...");
+  await fillLoginField(pass, credentials.password);
+  await new Promise((r) => setTimeout(r, humanActionDelay()));
+
+  const loginBtn = page
+    .locator(
+      'button[name="login"], button[type="submit"], [role="button"][aria-label*="giriş" i], [role="button"][aria-label*="log in" i]',
+    )
+    .first();
+  const loginBtnByText = page.getByRole("button", {
+    name: /giriş yap|log in|devam et|continue/i,
+  });
+
+  try {
+    if (await loginBtn.isVisible({ timeout: 1500 })) {
+      await loginBtn.click();
+    } else if (await loginBtnByText.first().isVisible({ timeout: 1500 })) {
+      await loginBtnByText.first().click();
+    } else {
+      await pass.press("Enter");
+    }
+  } catch {
+    await pass.press("Enter").catch(() => {});
+  }
+
+  try {
+    await Promise.race([
+      page.waitForURL(
+        (url) =>
+          url.hostname === "www.facebook.com" &&
+          !url.pathname.startsWith("/login"),
+        { timeout: LOGIN_WAIT_MS },
+      ),
+      page.waitForLoadState("domcontentloaded", { timeout: LOGIN_WAIT_MS }),
+    ]);
+  } catch {
+    // continue with logged-in check below
+  }
+
+  await new Promise((r) => setTimeout(r, 2000));
+  return await isLoggedIn(page);
+}
+
 async function tryGoToLoginFormFromAccountPicker(page: Page): Promise<boolean> {
   const otherProfileCandidates = [
     page.getByRole("button", { name: /başka bir profil kullan/i }).first(),
@@ -389,6 +519,7 @@ async function tryAutoLogin(
 async function ensureLoggedIn(
   page: Page,
   credentials: FbCredentials | null,
+  preferredLabel?: string,
 ): Promise<void> {
   await randomDelay(400, 1200);
   await page.goto("https://www.facebook.com", {
@@ -403,6 +534,26 @@ async function ensureLoggedIn(
     return;
   }
 
+  // Hesap seçicide hedef profil görünüyorsa direkt o profile gir.
+  const usedRememberedAccount = await trySelectRememberedAccountFromPicker(
+    page,
+    preferredLabel,
+  );
+  if (usedRememberedAccount) {
+    const completedPasswordOnly = await trySubmitPasswordOnlyStep(
+      page,
+      credentials,
+    );
+    if (completedPasswordOnly && (await isLoggedIn(page))) {
+      console.log("✅ Kayıtlı profil şifresi girilerek giriş tamamlandı.");
+      return;
+    }
+  }
+  if (usedRememberedAccount && (await isLoggedIn(page))) {
+    console.log("✅ Kayıtlı profil üzerinden giriş algılandı.");
+    return;
+  }
+
   // Hesap seçici ekranı varsa login formuna geç.
   await tryGoToLoginFormFromAccountPicker(page);
 
@@ -411,6 +562,24 @@ async function ensureLoggedIn(
     await new Promise((r) => setTimeout(r, 5000));
     if (await isLoggedIn(page)) {
       console.log("✅ Giriş algılandı.");
+      return;
+    }
+    const usedRememberedAccountRetry = await trySelectRememberedAccountFromPicker(
+      page,
+      preferredLabel,
+    );
+    if (usedRememberedAccountRetry) {
+      const completedPasswordOnlyRetry = await trySubmitPasswordOnlyStep(
+        page,
+        credentials,
+      );
+      if (completedPasswordOnlyRetry && (await isLoggedIn(page))) {
+        console.log("✅ Kayıtlı profil şifresi girilerek giriş tamamlandı.");
+        return;
+      }
+    }
+    if (usedRememberedAccountRetry && (await isLoggedIn(page))) {
+      console.log("✅ Kayıtlı profil üzerinden giriş algılandı.");
       return;
     }
     await tryGoToLoginFormFromAccountPicker(page);
@@ -455,7 +624,9 @@ async function ensureLoggedIn(
         told2fa = true;
         console.log("🔐 2 adımlı doğrulama (2FA) gerekli.");
         console.log("   Telefon onayı / SMS / Authenticator kodunu girin.");
-        console.log(`   Toplam bekleme: ${(LOGIN_WAIT_MS + TWO_FA_WAIT_MS) / 60000} dakika.`);
+        console.log(
+          `   Toplam bekleme: ${(LOGIN_WAIT_MS + TWO_FA_WAIT_MS) / 60000} dakika.`,
+        );
       }
 
       await new Promise((r) => setTimeout(r, 1000));
@@ -692,7 +863,9 @@ async function openProfileMenu(page: Page) {
   return true;
 }
 
-async function getActiveProfileNameFromMenu(page: Page): Promise<string | null> {
+async function getActiveProfileNameFromMenu(
+  page: Page,
+): Promise<string | null> {
   // Best-effort: FB DOM changes often; we only need a stable signal.
   const menuCandidates = [
     page.locator('[role="menu"]').last(),
@@ -722,7 +895,9 @@ async function isCorrectFacebookAccount(page: Page, expectedLabel?: string) {
   if (!expected) return true;
 
   // Go to a stable surface first; group pages sometimes hide the top bar.
-  await page.goto("https://www.facebook.com", { waitUntil: "domcontentloaded" });
+  await page.goto("https://www.facebook.com", {
+    waitUntil: "domcontentloaded",
+  });
   await page.waitForLoadState("domcontentloaded");
   await new Promise((r) => setTimeout(r, 1000));
 
@@ -764,7 +939,7 @@ async function ensureCorrectFacebookAccount(
   // 2) Try to recover: logout -> login with intended credentials -> re-check
   await logoutFromFacebook(page).catch(() => false);
   await new Promise((r) => setTimeout(r, 1200));
-  await ensureLoggedIn(page, credentials);
+  await ensureLoggedIn(page, credentials, expected);
   if (await isCorrectFacebookAccount(page, expected)) return;
 
   // 3) Manual fallback: keep the window open and wait for the user to switch account.
@@ -772,7 +947,9 @@ async function ensureCorrectFacebookAccount(
   console.log("");
   console.log("⚠️  Hesap hala beklenen değil.");
   console.log(`   Beklenen hesap etiketi: "${expected}"`);
-  console.log("   Açık pencerede doğru hesaba geçiş yapın (profil menüsünden).");
+  console.log(
+    "   Açık pencerede doğru hesaba geçiş yapın (profil menüsünden).",
+  );
   console.log(`   ${waitMs / 60000} dakika bekleniyor...`);
   console.log("");
 
@@ -874,6 +1051,81 @@ async function fillIfFound(
     }
   }
   return false;
+}
+
+async function ensureCheckboxCheckedByText(
+  scopes: Array<Page | Locator>,
+  labelRe: RegExp,
+  displayName: string,
+): Promise<void> {
+  let cb: Locator | null = null;
+  for (const scope of scopes) {
+    const cand = scope
+      .locator('[role="checkbox"]')
+      .filter({ hasText: labelRe })
+      .first();
+    if ((await cand.count().catch(() => 0)) > 0) {
+      cb = cand;
+      break;
+    }
+  }
+
+  if (!cb) throw new Error(`Checkbox bulunamadı: "${displayName}"`);
+
+  await cb.scrollIntoViewIfNeeded().catch(() => {});
+  await new Promise((r) => setTimeout(r, humanActionDelay()));
+
+  const checkedBefore = await cb.getAttribute("aria-checked").catch(() => null);
+  if (checkedBefore === "true") return;
+
+  await cb.click({ timeout: 10000 });
+  await new Promise((r) => setTimeout(r, humanActionDelay()));
+
+  for (let i = 0; i < 12; i++) {
+    const now = await cb.getAttribute("aria-checked").catch(() => null);
+    if (now === "true") return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  const checkedAfter = await cb.getAttribute("aria-checked").catch(() => null);
+  if (checkedAfter !== "true") {
+    throw new Error(`Checkbox işaretlenemedi: "${displayName}"`);
+  }
+}
+
+async function ensureMeetupPreferencesChecked(
+  page: Page,
+  root: Locator,
+): Promise<void> {
+  // Best-effort wait: this block appears on the details step right before “İleri”.
+  await Promise.race([
+    root
+      .locator('text=/Buluşma tercihleri/i')
+      .first()
+      .waitFor({ state: "visible", timeout: 8000 })
+      .catch(() => {}),
+    page
+      .locator('text=/Buluşma tercihleri/i')
+      .first()
+      .waitFor({ state: "visible", timeout: 8000 })
+      .catch(() => {}),
+  ]).catch(() => {});
+
+  await ensureCheckboxCheckedByText(
+    [root, page],
+    /Herkese\s*aç[ıi]k.*buluşma/i,
+    "Herkese açık bir yerde buluşma",
+  );
+  await ensureCheckboxCheckedByText(
+    [root, page],
+    /Kap[ıi]da\s*teslim\s*alma/i,
+    "Kapıda teslim alma",
+  );
+  await ensureCheckboxCheckedByText(
+    [root, page],
+    /Kap[ıi]ya\s*b[ıi]rakma/i,
+    "Kapıya bırakma",
+  );
 }
 
 async function selectCondition(page: Page, statusText: string) {
@@ -1106,7 +1358,11 @@ async function runGroupSellFlow(
     }
 
     const after = await counter.textContent().catch(() => null);
-    if (!after || after === before || !/Fotoğraflar.*[1-9]\d*\s*\/\s*42/i.test(after)) {
+    if (
+      !after ||
+      after === before ||
+      !/Fotoğraflar.*[1-9]\d*\s*\/\s*42/i.test(after)
+    ) {
       throw new Error(
         `Fotoğraf yükleme başarısız: sayaç güncellenmedi (önce="${before ?? ""}", sonra="${after ?? ""}").`,
       );
@@ -1252,6 +1508,9 @@ async function runGroupSellFlow(
     }
   }
 
+  // 4.5) Buluşma tercihleri (İleri'den önce zorunlu)
+  await ensureMeetupPreferencesChecked(page, root);
+
   // 5) İleri
   const ileri = root
     .locator('div[role="button"]')
@@ -1285,6 +1544,295 @@ function extractFirstLine(text: string): string | null {
     .map((l) => l.trim())
     .filter(Boolean);
   return lines.length ? lines[0] : null;
+}
+
+async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
+  // On “Daha fazla yerde paylaş”, Marketplace is a separate selectable row.
+  // Some UIs render it as role="button", others as role="checkbox".
+  // We try hard to select it idempotently (avoid toggling off if already selected).
+  const titleRe = /Daha fazla yerde (paylaş|ilan ver)/i;
+  const marketplaceSectionTitleRe = /İlanını\s+Marketplace['’]?e\s+ekle/i;
+  const marketplaceDescriptionRe =
+    /Marketplace ürünleri herkese açıktır|Pazar\s*yeri ürünleri herkese açıktır/i;
+  const exactMarketplaceTitleRe = /^Marketplace$|^Pazar\s*yeri$/i;
+
+  const modal = page
+    .locator('[role="dialog"], [aria-modal="true"]')
+    .filter({ hasText: titleRe })
+    .first();
+
+  const scopes: Array<Page | Locator> = [dialog, modal, page];
+  let section: Locator | null = null;
+
+  const resolveSection = async (): Promise<Locator | null> => {
+    for (const scope of [dialog, modal, page] as Array<Page | Locator>) {
+      const candidate = scope
+        .locator("div")
+        .filter({ hasText: marketplaceSectionTitleRe })
+        .filter({ hasText: marketplaceDescriptionRe })
+        .first();
+      if ((await candidate.count().catch(() => 0)) > 0) return candidate;
+    }
+    return null;
+  };
+
+  const findRow = async (): Promise<Locator | null> => {
+    const strictScopes: Array<Page | Locator> = section ? [section] : [];
+    const searchScopes: Array<Page | Locator> =
+      strictScopes.length > 0 ? strictScopes : scopes;
+
+    for (const scope of searchScopes) {
+      const byExactRow = scope
+        .locator("div")
+        .filter({ has: scope.locator(`text=/${exactMarketplaceTitleRe.source}/i`) })
+        .filter({ has: scope.locator(`text=/${marketplaceDescriptionRe.source}/i`) })
+        .filter({
+          has: scope.locator('svg[viewBox="0 0 24 24"], svg[viewBox="0 0 20 20"]'),
+        })
+        .first()
+        .locator(
+          'xpath=ancestor::div[' +
+            './/*[normalize-space(.)="Marketplace" or normalize-space(.)="Pazar yeri"]' +
+            ' and .//*[contains(normalize-space(.), "Marketplace ürünleri herkese açıktır") or contains(normalize-space(.), "Pazar yeri ürünleri herkese açıktır")]' +
+            ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
+            '][1]',
+        );
+      if ((await byExactRow.count().catch(() => 0)) > 0) return byExactRow;
+
+      const byExactDescriptionRow = scope
+        .locator(`text=/${marketplaceDescriptionRe.source}/i`)
+        .first()
+        .locator(
+          'xpath=ancestor::div[' +
+            './/*[normalize-space(.)="Marketplace" or normalize-space(.)="Pazar yeri"]' +
+            ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
+            '][1]',
+        );
+      if ((await byExactDescriptionRow.count().catch(() => 0)) > 0)
+        return byExactDescriptionRow;
+
+      const byTitleRow = scope
+        .locator(`text=/${exactMarketplaceTitleRe.source}/i`)
+        .first()
+        .locator(
+          'xpath=ancestor::div[' +
+            './/*[contains(normalize-space(.), "Marketplace ürünleri herkese açıktır") or contains(normalize-space(.), "Pazar yeri ürünleri herkese açıktır")]' +
+            ' and .//*[name()="svg" and (@viewBox="0 0 24 24" or @viewBox="0 0 20 20")]' +
+            '][1]',
+        );
+      if ((await byTitleRow.count().catch(() => 0)) > 0) return byTitleRow;
+    }
+    return null;
+  };
+
+  // Lazy-render: dialog becomes visible before the Marketplace row is in DOM.
+  // Retry for a short window before giving up.
+  let row: Locator | null = null;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    section = section ?? (await resolveSection());
+    row = await findRow();
+    if (row) break;
+
+    if (attempt === 0) {
+      // Wait for the Marketplace section header/description to appear (best-effort).
+      await Promise.race([
+        dialog
+          .locator('text=/İlanını\\s+Marketplace[\'’]?e\\s+ekle/i')
+          .first()
+          .waitFor({ state: "visible", timeout: 6000 })
+          .catch(() => {}),
+        modal
+          .locator('text=/İlanını\\s+Marketplace[\'’]?e\\s+ekle/i')
+          .first()
+          .waitFor({ state: "visible", timeout: 6000 })
+          .catch(() => {}),
+        page
+          .locator("text=/Marketplace ürünleri/i")
+          .first()
+          .waitFor({ state: "visible", timeout: 6000 })
+          .catch(() => {}),
+      ]).catch(() => {});
+    }
+
+    await new Promise((r) => setTimeout(r, 400));
+  }
+
+  if (!row) {
+    console.warn(
+      '⚠️  "Marketplace" seçeneği bulunamadı (Daha fazla yerde paylaş). Atlanıyor...',
+    );
+    return;
+  }
+
+  await row.waitFor({ state: "visible", timeout: 15000 });
+  await row.scrollIntoViewIfNeeded().catch(() => {});
+
+  const readCheckboxIconState = async (
+    scope: Locator,
+  ): Promise<"checked" | "unchecked" | "unknown"> => {
+    const icon = scope.locator('svg[viewBox="0 0 24 24"]').last();
+    if ((await icon.count().catch(() => 0)) === 0) return "unknown";
+
+    return await icon
+      .evaluate((svg) => {
+        const iconStyle = String(svg.getAttribute("style") ?? "");
+        const iconPathD =
+          svg.querySelector("path")?.getAttribute("d") ??
+          svg.querySelector("path:last-of-type")?.getAttribute("d") ??
+          "";
+
+        const hasCheckGlyph =
+          /1\.414-1\.414/.test(iconPathD) || /3\.535\s+0/.test(iconPathD);
+        const accent = /var\(--accent\)/i.test(iconStyle);
+        const primary = /var\(--primary-icon\)/i.test(iconStyle);
+
+        if (hasCheckGlyph || accent) return "checked";
+        if (primary) return "unchecked";
+        return "unknown";
+      })
+      .catch(() => "unknown");
+  };
+
+  const readMarketplaceState = async (): Promise<
+    "checked" | "unchecked" | "unknown"
+  > => {
+    section = section ?? (await resolveSection());
+    const currentRow = (await findRow()) ?? row;
+    if (!currentRow) return "unknown";
+    row = currentRow;
+
+    const iconState = await readCheckboxIconState(currentRow);
+    if (iconState !== "unknown") return iconState;
+
+    return await currentRow
+      .evaluate((el) => {
+        const root = el as HTMLElement;
+        const attrs = ["aria-checked", "aria-pressed", "aria-selected"];
+
+        // 1) Direct/descendant aria state is most reliable when available.
+        const readAria = (node: Element | null): string | null => {
+          if (!node) return null;
+          for (const a of attrs) {
+            const v = node.getAttribute(a);
+            if (v === "true" || v === "false") return v;
+          }
+          return null;
+        };
+
+        const direct = readAria(root);
+        if (direct === "true") return "checked";
+        if (direct === "false") return "unchecked";
+
+        const desc = root.querySelector<HTMLElement>(
+          '[aria-checked], [aria-pressed], [aria-selected], [role="checkbox"]',
+        );
+        const descVal = readAria(desc);
+        if (descVal === "true") return "checked";
+        if (descVal === "false") return "unchecked";
+
+        // 2) Visual fallback. Some rows contain multiple SVGs:
+        // a left Marketplace icon and a right selection-state icon.
+        const svgs = Array.from(root.querySelectorAll<SVGElement>("svg"));
+        let sawUncheckedHint = false;
+        for (const svg of svgs) {
+          const iconStyle = String(svg.getAttribute("style") ?? "");
+          const iconPathD =
+            svg.querySelector("path")?.getAttribute("d") ??
+            svg.querySelector("path:last-of-type")?.getAttribute("d") ??
+            "";
+
+          const hasCheckGlyph =
+            /1\.414-1\.414/.test(iconPathD) || /3\.535\s+0/.test(iconPathD);
+          const accent = /var\(--accent\)/i.test(iconStyle);
+          const primary = /var\(--primary-icon\)/i.test(iconStyle);
+
+          if (hasCheckGlyph || accent) return "checked";
+          if (primary) sawUncheckedHint = true;
+        }
+
+        if (sawUncheckedHint) return "unchecked";
+        return "unknown";
+      })
+      .catch(() => "unknown");
+  };
+
+  const state0 = await readMarketplaceState();
+  if (state0 === "checked") return;
+
+  const checkboxArea = row.locator(
+    'xpath=.//*[name()="svg" and @viewBox="0 0 24 24"][last()]/ancestor::div[1]',
+  );
+  const checkboxIcon = row.locator('svg[viewBox="0 0 24 24"]').last();
+
+  const waitUntilChecked = async (
+    attempts = 18,
+    delayMs = 180,
+  ): Promise<boolean> => {
+    for (let i = 0; i < attempts; i++) {
+      const state = await readMarketplaceState();
+      if (state === "checked") return true;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return false;
+  };
+
+  const trySingleClick = async (
+    target: Locator,
+    mode: "normal" | "force" | "dom",
+  ): Promise<boolean> => {
+    if ((await target.count().catch(() => 0)) === 0) return false;
+    await target.scrollIntoViewIfNeeded().catch(() => {});
+    await new Promise((r) => setTimeout(r, humanActionDelay()));
+
+    try {
+      if (mode === "normal") {
+        await target.click({ timeout: 4000 });
+      } else if (mode === "force") {
+        await target.click({ timeout: 4000, force: true });
+      } else {
+        await target.evaluate((node) => {
+          (node as HTMLElement).click();
+        });
+      }
+    } catch {
+      return false;
+    }
+
+    return await waitUntilChecked();
+  };
+
+  const clickPlans: Array<{
+    target: Locator;
+    mode: "normal" | "force" | "dom";
+  }> = [
+    { target: checkboxArea, mode: "normal" },
+    { target: checkboxIcon, mode: "normal" },
+    { target: checkboxArea, mode: "force" },
+    { target: checkboxIcon, mode: "force" },
+    { target: checkboxArea, mode: "dom" },
+  ];
+
+  for (const plan of clickPlans) {
+    if (await trySingleClick(plan.target, plan.mode)) return;
+  }
+
+  const coordinateTargets = [checkboxArea, checkboxIcon, row, section].filter(
+    (target): target is Locator => Boolean(target),
+  );
+  for (const target of coordinateTargets) {
+    const box = await target.boundingBox().catch(() => null);
+    if (!box) continue;
+
+    const clickX = box.x + Math.min(box.width - 8, Math.max(box.width - 18, box.width * 0.9));
+    const clickY = box.y + box.height / 2;
+
+    await page.mouse.click(clickX, clickY).catch(() => {});
+    if (await waitUntilChecked()) return;
+  }
+
+  if (await waitUntilChecked(10, 150)) return;
+
+  throw new Error('"Marketplace" seçeneği işaretlenemedi (durum doğrulanamadı).');
 }
 
 async function getMorePlacesDialog(page: Page): Promise<Locator | null> {
@@ -1485,9 +2033,12 @@ async function clickPaylasAndWait(page: Page, dialog: Locator) {
     return await el
       .evaluate((node) => {
         const n = node as any;
-        const ariaDisabled = String(n?.getAttribute?.("aria-disabled") ?? "") === "true";
+        const ariaDisabled =
+          String(n?.getAttribute?.("aria-disabled") ?? "") === "true";
         const disabledProp = Boolean(n?.disabled);
-        const ancestor = (n as HTMLElement | null)?.closest?.('[aria-disabled="true"]');
+        const ancestor = (n as HTMLElement | null)?.closest?.(
+          '[aria-disabled="true"]',
+        );
         return Boolean(ariaDisabled || disabledProp || ancestor);
       })
       .catch(() => false);
@@ -1500,7 +2051,9 @@ async function clickPaylasAndWait(page: Page, dialog: Locator) {
     await new Promise((r) => setTimeout(r, 250));
   }
   if (await isEffectivelyDisabled(paylas)) {
-    throw new Error('"Paylaş" butonu disabled görünüyor (seçim sonrası aktifleşmedi).');
+    throw new Error(
+      '"Paylaş" butonu disabled görünüyor (seçim sonrası aktifleşmedi).',
+    );
   }
 
   await new Promise((r) => setTimeout(r, humanActionDelay()));
@@ -1657,6 +2210,7 @@ async function shareToMoreGroupsUntilExhausted(
   opts: { groupUrl: string; listingTitle: string; maxPerBatch: number },
 ) {
   const already = new Set<string>();
+  let marketplaceSelectionHandled = false;
 
   // Wait a bit: after “İleri” FB often animates into the share screen.
   await new Promise((r) => setTimeout(r, 2500));
@@ -1672,6 +2226,12 @@ async function shareToMoreGroupsUntilExhausted(
     } catch {
       dialog = await getMorePlacesDialog(page);
       if (!dialog) return;
+    }
+
+    // Marketplace only needs to be handled once for this posting flow.
+    if (!marketplaceSelectionHandled) {
+      await ensureMarketplaceSelected(page, dialog);
+      marketplaceSelectionHandled = true;
     }
 
     const picked = await selectUpToNewGroupsInDialog(
@@ -1737,7 +2297,11 @@ export async function runFbMarketplace(
 
   const key = profileKey ? safeKey(profileKey) : "default";
 
-  const credsToRun = resolveCredentialsToRun(payload, fbCredentials ?? null, key);
+  const credsToRun = resolveCredentialsToRun(
+    payload,
+    fbCredentials ?? null,
+    key,
+  );
   const postsToRun = resolvePostsToRun(payload);
   if (postsToRun.length === 0) {
     throw new Error(
@@ -1765,7 +2329,9 @@ export async function runFbMarketplace(
     );
 
     const effectiveChromeProfilePath =
-      chromeProfilePath && credsToRun.length === 1 ? chromeProfilePath : undefined;
+      chromeProfilePath && credsToRun.length === 1
+        ? chromeProfilePath
+        : undefined;
     const profilePath =
       effectiveChromeProfilePath ??
       path.join(profilesDir, `facebook_${key}_${accountKey}`);
@@ -1799,7 +2365,10 @@ export async function runFbMarketplace(
       });
 
       console.log("🔐 Facebook oturumu kontrol ediliyor...");
-      await ensureLoggedIn(page, { email: cred.email, password: cred.password });
+      await ensureLoggedIn(page, {
+        email: cred.email,
+        password: cred.password,
+      }, cred.label);
       await ensureCorrectFacebookAccount(page, cred.label, {
         email: cred.email,
         password: cred.password,
@@ -1819,11 +2388,10 @@ export async function runFbMarketplace(
 
         try {
           await randomDelay(300, 900);
-          await runGroupSellFlow(
-            page,
-            payloadForPost,
-            { email: cred.email, password: cred.password },
-          );
+          await runGroupSellFlow(page, payloadForPost, {
+            email: cred.email,
+            password: cred.password,
+          });
 
           const shotCreatePath = path.join(
             downloadsDir,
