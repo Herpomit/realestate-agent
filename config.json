@@ -1,10 +1,10 @@
 {
   "apiBase": "http://188.240.81.60:4002",
-  "agentId": "7d678dae-ff4e-462d-bb7a-6380e71c9437",
-  "token": "53eedddd319f1578ab5feacd5bb9bcebdaf6caef910b2d523349b6ed3caa8cb6",
+  "agentId": "8a633521-fe74-4c48-8fd1-d722538e576d",
+  "token": "abdbc267c9f9a2d21581208d290e34d660873a7f98745707f633679135191f52",
   "pollIntervalMs": 3000,
-  "downloadsDir": "D:\\projeler\\realestate-agent\\downloads",
-  "profilesDir": "D:\\projeler\\realestate-agent\\profiles",
+  "downloadsDir": "C:\\Users\\canbe\\Desktop\\realestate-agent\\downloads",
+  "profilesDir": "C:\\Users\\canbe\\Desktop\\realestate-agent\\profiles",
   "mediaDir": "C:\\shared-media",
-  "chromeProfilePath": "D:\\projeler\\realestate-agent\\profiles\\facebook"
+  "chromeProfilePath": "C:\\Users\\canbe\\Desktop\\realestate-agent\\profiles\\facebook"
 }

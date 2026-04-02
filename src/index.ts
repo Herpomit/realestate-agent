@@ -9,7 +9,12 @@ import {
   loadFbCredentials,
 } from "./credentials.js";
 import { getFingerprint } from "./device.js";
-import { listMediaFilesUnderTitleFolder, resolveMediaFilePaths } from "./media.js";
+import {
+  extractRequestedMediaEntries,
+  resolveMediaFilePaths,
+  resolveMediaFilePathsFromUuidFolder,
+  resolveMediaUuidFromPost,
+} from "./media.js";
 import { runFbMarketplace } from "./runners/fbMarketplace.js";
 
 type PairResp = { agentId: string; token: string };
@@ -123,7 +128,8 @@ async function main() {
             }
           }
 
-          // Yeni akış: Frontend sadece dosya isimlerini gönderebilir. Agent bunları cfg.mediaDir altında gerçek path'e çevirir.
+          // Yeni akış: Frontend resim isimlerini + uuid gönderir.
+          // Agent bu isimleri cfg.mediaDir/<uuid>/ altında, verilen sırayı koruyarak resolve eder.
           // Not: multi-post payload'larda her post için ayrı resolve yapılmalı.
           const posts = Array.isArray(payload?.posts)
             ? (payload.posts as any[])
@@ -134,48 +140,63 @@ async function main() {
           const mediaIssues: string[] = [];
           for (const p of posts) {
             const mp = p?.marketplacePayload;
-            const postTitle = String(p?.title ?? "").trim();
-            const rawMedia =
-              mp?.mediaFilePaths ??
-              mp?.mediaFileNames ??
-              mp?.imageFilePaths ??
-              mp?.imageFileNames;
             if (!mp) continue;
 
-            // New behavior:
-            // - Prefer media under: <mediaDir>/<post.title>/*
-            // - If title folder not found / empty, fall back to old behavior (resolve by file names).
-            const fromTitleFolder = listMediaFilesUnderTitleFolder(
-              postTitle,
-              cfg.mediaDir,
-            );
+            const { entries: rawMedia, sourceKey: mediaSourceKey } =
+              extractRequestedMediaEntries(p);
+            const mediaUuid = resolveMediaUuidFromPost(p);
+            const rawMediaCount = Array.isArray(rawMedia) ? rawMedia.length : 0;
+            const postTag = p?.title
+              ? `Post "${String(p.title)}"`
+              : p?.id
+                ? `Post ${String(p.id)}`
+                : "Post";
 
-            const used =
-              fromTitleFolder.resolved.length > 0
-                ? fromTitleFolder
-                : rawMedia
-                  ? resolveMediaFilePaths(rawMedia, cfg.mediaDir)
-                  : fromTitleFolder;
+            console.log(
+              `🖼️  ${postTag} medya çözümleme başlıyor | uuid=${mediaUuid ?? "-"} | seçim=${rawMediaCount} | kaynak=${mediaSourceKey ?? "-"} | mediaDir=${cfg.mediaDir ?? "-"}`,
+            );
+            if (!mediaUuid) {
+              console.warn(
+                `⚠️  ${postTag} için media uuid bulunamadı, eski dosya-adı/path fallback akışı kullanılacak.`,
+              );
+            }
+
+            const used = mediaUuid
+              ? resolveMediaFilePathsFromUuidFolder(
+                  mediaUuid,
+                  rawMedia,
+                  cfg.mediaDir,
+                )
+              : rawMedia
+                ? resolveMediaFilePaths(rawMedia, cfg.mediaDir)
+                : {
+                    resolved: [],
+                    missing: [],
+                    invalid: ["Media uuid bulunamadı"],
+                    folderTried: undefined,
+                  };
+
+            console.log(
+              `🖼️  ${postTag} medya çözümleme sonucu | yöntem=${mediaUuid ? "uuid-folder" : "fallback"} | klasör=${used.folderTried ?? "-"} | bulunan=${used.resolved.length} | missing=${used.missing.length} | invalid=${used.invalid.length}`,
+            );
 
             mp.mediaFilePaths = used.resolved;
             // Back-compat with payloads using imageFilePaths/imageFileNames keys
             mp.imageFilePaths = used.resolved;
 
             if (used.missing.length > 0 || used.invalid.length > 0) {
-              const postTag = p?.title
-                ? `Post "${String(p.title)}"`
-                : p?.id
-                  ? `Post ${String(p.id)}`
-                  : "Post";
-
               if (used.missing.length > 0) {
                 mediaIssues.push(
-                  `${postTag} -> Bulunamayan medya: ${used.missing.join(", ")}`,
+                  `${postTag} -> Bulunamayan medya${
+                    mediaUuid ? ` (uuid=${mediaUuid})` : ""
+                  }: ${used.missing.join(", ")}`,
                 );
               }
               if (used.invalid.length > 0) {
                 mediaIssues.push(
-                  `${postTag} -> Geçersiz medya girdileri (path traversal vs): ${used.invalid.join(", ")}`,
+                  `${postTag} -> Geçersiz medya girdileri${
+                    mediaUuid ? ` (uuid=${mediaUuid})` : ""
+                  }: ${used.invalid.join(", ")}`,
                 );
               }
             }
