@@ -1028,7 +1028,7 @@ async function fillIfFound(
   value: string,
 ) {
   if (!value) return false;
-  const delayMs = humanTypingDelay();
+  const delayMs = 10 + Math.floor(Math.random() * 12);
   const selectAllCombo = process.platform === "darwin" ? "Meta+A" : "Control+A";
   for (const loc of candidates) {
     try {
@@ -1036,13 +1036,20 @@ async function fillIfFound(
       if ((await el.count()) === 0) continue;
       await el.waitFor({ state: "visible", timeout: 2000 });
       await el.click({ timeout: 2000 }).catch(() => {});
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
+      await randomDelay(20, 50);
+      try {
+        await el.fill("");
+        await el.fill(value);
+        return true;
+      } catch {
+        // Some FB fields don't fully support fill(); use keyboard fallback below.
+      }
       await el.press(selectAllCombo).catch(() => {});
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
+      await randomDelay(20, 50);
       await el.press("Backspace").catch(() => {});
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
+      await randomDelay(20, 50);
       await el.pressSequentially(value, { delay: delayMs });
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
+      await randomDelay(20, 50);
       return true;
     } catch {
       // try next candidate
@@ -1533,6 +1540,7 @@ async function runGroupSellFlow(
     groupUrl,
     listingTitle: title,
     maxPerBatch: 20,
+    maxTotalGroups: 200,
   });
 }
 
@@ -1542,6 +1550,13 @@ function extractFirstLine(text: string): string | null {
     .map((l) => l.trim())
     .filter(Boolean);
   return lines.length ? lines[0] : null;
+}
+
+function normalizeComparableText(text: string | null | undefined): string {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("tr-TR");
 }
 
 async function ensureMarketplaceSelected(page: Page, dialog: Locator) {
@@ -1926,6 +1941,48 @@ async function selectUpToNewGroupsInDialog(
   already: Set<string>,
   maxToSelect: number,
 ): Promise<number> {
+  const getCheckboxName = async (cb: Locator): Promise<string | null> => {
+    const txt = await cb.innerText().catch(() => "");
+    const name = extractFirstLine(txt);
+    return name ? normalizeComparableText(name) : null;
+  };
+
+  const findCheckboxByName = async (
+    normalizedName: string,
+  ): Promise<Locator | null> => {
+    const count = await dialog.locator('[role="checkbox"]').count().catch(() => 0);
+    for (let i = 0; i < count; i++) {
+      const candidate = dialog.locator('[role="checkbox"]').nth(i);
+      const candidateName = await getCheckboxName(candidate);
+      if (candidateName === normalizedName) return candidate;
+    }
+    return null;
+  };
+
+  const waitUntilGroupChecked = async (
+    primary: Locator,
+    normalizedName: string,
+    attempts = 5,
+    delayMs = 70,
+  ): Promise<boolean> => {
+    for (let i = 0; i < attempts; i++) {
+      const directState = await primary
+        .getAttribute("aria-checked")
+        .catch(() => null);
+      if (directState === "true") return true;
+
+      if (i >= 1) {
+        const target = await findCheckboxByName(normalizedName);
+        if (target) {
+          const state = await target.getAttribute("aria-checked").catch(() => null);
+          if (state === "true") return true;
+        }
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return false;
+  };
+
   const scrollEl = await getShareListScrollable(dialog);
 
   // Ensure we're at the top so we can discover pre-checked items.
@@ -1935,7 +1992,7 @@ async function selectUpToNewGroupsInDialog(
       e.scrollTop = 0;
     })
     .catch(() => {});
-  await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, 80));
 
   // Seed the set with any currently-checked groups (these are already selected/shared in UI).
   const seedCount = await dialog
@@ -1944,8 +2001,7 @@ async function selectUpToNewGroupsInDialog(
     .catch(() => 0);
   for (let i = 0; i < seedCount; i++) {
     const cb = dialog.locator('[role="checkbox"][aria-checked="true"]').nth(i);
-    const txt = await cb.innerText().catch(() => "");
-    const name = extractFirstLine(txt);
+    const name = await getCheckboxName(cb);
     if (name) already.add(name);
   }
 
@@ -1963,27 +2019,29 @@ async function selectUpToNewGroupsInDialog(
       const cb = dialog.locator('[role="checkbox"]').nth(i);
       const checked = await cb.getAttribute("aria-checked").catch(() => null);
       if (checked === "true") {
-        const txt = await cb.innerText().catch(() => "");
-        const name = extractFirstLine(txt);
+        const name = await getCheckboxName(cb);
         if (name) already.add(name);
         continue;
       }
 
-      const txt = await cb.innerText().catch(() => "");
-      const name = extractFirstLine(txt);
+      const name = await getCheckboxName(cb);
       if (!name) continue;
       if (already.has(name)) continue;
 
       await cb.scrollIntoViewIfNeeded().catch(() => {});
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
-      await cb.click({ timeout: 10000 });
-      await new Promise((r) => setTimeout(r, humanActionDelay()));
+      await randomDelay(20, 45);
+      await cb.click({ timeout: 5000 }).catch(() => {});
 
-      // confirm it toggled
-      for (let k = 0; k < 10; k++) {
-        const now = await cb.getAttribute("aria-checked").catch(() => null);
-        if (now === "true") break;
-        await new Promise((r) => setTimeout(r, 150));
+      if (!(await waitUntilGroupChecked(cb, name))) {
+        const freshCb = await findCheckboxByName(name);
+        if (freshCb) {
+          await freshCb.scrollIntoViewIfNeeded().catch(() => {});
+          await randomDelay(20, 45);
+          await freshCb.click({ timeout: 5000, force: true }).catch(() => {});
+          if (!(await waitUntilGroupChecked(freshCb, name, 6, 85))) continue;
+        } else {
+          continue;
+        }
       }
 
       already.add(name);
@@ -2000,8 +2058,8 @@ async function selectUpToNewGroupsInDialog(
     const atBottom = await isScrollAtBottom(scrollEl);
     if (atBottom || scrollStepsWithoutProgress >= 6) break;
 
-    await scrollDialogList(page, scrollEl, 700);
-    await new Promise((r) => setTimeout(r, 350));
+    await scrollDialogList(page, scrollEl, 900);
+    await new Promise((r) => setTimeout(r, 110));
   }
 
   return selected;
@@ -2083,12 +2141,16 @@ async function clickPaylasAndWait(page: Page, dialog: Locator) {
     .locator('[role="dialog"], [aria-modal="true"]')
     .filter({ hasText: /İlan yayınlandı/i })
     .first();
+  const publishedVisible = await published
+    .isVisible({ timeout: 1800 })
+    .catch(() => false);
+  if (!publishedVisible) return;
+
   try {
-    await published.waitFor({ state: "visible", timeout: 20000 });
     const closeBtn = published
       .locator('[aria-label="Kapat"][role="button"]')
       .first();
-    await closeBtn.waitFor({ state: "visible", timeout: 15000 });
+    await closeBtn.waitFor({ state: "visible", timeout: 8000 });
     await new Promise((r) => setTimeout(r, humanActionDelay()));
     await closeBtn.click();
     await published
@@ -2146,7 +2208,7 @@ async function tryOpenMorePlacesFromPostMenu(
     .or(root.locator('[aria-label="Bu gönderi için eylemler"]').first());
   try {
     await menuBtn.waitFor({ state: "visible", timeout: 8000 });
-    await new Promise((r) => setTimeout(r, humanActionDelay()));
+    await randomDelay(50, 120);
     await menuBtn.click();
   } catch {
     return false;
@@ -2158,7 +2220,7 @@ async function tryOpenMorePlacesFromPostMenu(
     .first();
   try {
     await item.waitFor({ state: "visible", timeout: 8000 });
-    await new Promise((r) => setTimeout(r, humanActionDelay()));
+    await randomDelay(50, 120);
     await item.click();
     return true;
   } catch {
@@ -2215,19 +2277,33 @@ async function tryOpenMorePlacesFromYourPosts(
 
 async function shareToMoreGroupsUntilExhausted(
   page: Page,
-  opts: { groupUrl: string; listingTitle: string; maxPerBatch: number },
+  opts: {
+    groupUrl: string;
+    listingTitle: string;
+    maxPerBatch: number;
+    maxTotalGroups: number;
+  },
 ) {
   const already = new Set<string>();
   let marketplaceSelectionHandled = false;
+  let totalSelected = 0;
 
-  // Wait a bit: after “İleri” FB often animates into the share screen.
-  await new Promise((r) => setTimeout(r, 1200));
+  // Give FB a short moment to finish the transition into the share dialog.
+  await randomDelay(350, 550);
 
   // If the dialog doesn't exist, we do nothing (some accounts/flows may skip it).
   let dialog = await getMorePlacesDialog(page);
   if (!dialog) return;
 
   for (let batch = 0; batch < 80; batch++) {
+    const remaining = opts.maxTotalGroups - totalSelected;
+    if (remaining <= 0) {
+      console.log(
+        `✅ Grup limiti doldu (${opts.maxTotalGroups}). Sonraki ilana geçiliyor...`,
+      );
+      return;
+    }
+
     dialog = (await getMorePlacesDialog(page)) ?? dialog;
     try {
       await dialog.waitFor({ state: "visible", timeout: 15000 });
@@ -2246,7 +2322,7 @@ async function shareToMoreGroupsUntilExhausted(
       page,
       dialog,
       already,
-      opts.maxPerBatch,
+      Math.min(opts.maxPerBatch, remaining),
     );
 
     if (picked <= 0) {
@@ -2264,6 +2340,14 @@ async function shareToMoreGroupsUntilExhausted(
     }
 
     await clickPaylasAndWait(page, dialog);
+    totalSelected += picked;
+
+    if (totalSelected >= opts.maxTotalGroups) {
+      console.log(
+        `✅ Bu ilan için toplam ${totalSelected} grup paylaşıldı. Sonraki ilana geçiliyor...`,
+      );
+      return;
+    }
 
     // Re-open only from the current post's 3-dots menu.
     // If FB no longer offers "Daha fazla yerde ilan ver", we consider the job done.
@@ -2272,7 +2356,7 @@ async function shareToMoreGroupsUntilExhausted(
       opts.listingTitle,
     );
     if (openedFromMenu) {
-      await new Promise((r) => setTimeout(r, 600));
+      await randomDelay(180, 320);
       continue;
     }
 
